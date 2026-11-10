@@ -1,0 +1,449 @@
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: #080b14;
+    color: #fff;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+button,
+input {
+    font: inherit;
+}
+
+button,
+a {
+    cursor: pointer;
+}
+
+.auth-page {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 25px;
+    background:
+        radial-gradient(ellipse at 15% 20%, #32205e 0, transparent 35%),
+        radial-gradient(ellipse at 90% 80%, #182a53 0, transparent 35%),
+        #080b14;
+}
+
+.auth-wrapper {
+    width: min(430px, 100%);
+}
+
+.auth-brand {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    margin-bottom: 30px;
+}
+
+.auth-brand span {
+    color: #946cff;
+}
+
+.auth-card,
+.admin-card {
+    background: #111827;
+    border: 1px solid #29334a;
+    border-radius: 16px;
+    padding: 32px;
+    box-shadow: 0 20px 65px rgba(0, 0, 0, .3);
+}
+
+.auth-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 13px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, #946cff, #5330a5);
+    font-size: 22px;
+    margin-bottom: 25px;
+}
+
+.auth-label {
+    display: block;
+    color: #a98cff;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 2px;
+}
+
+.auth-card h1 {
+    font-size: 27px;
+    margin-top: 10px;
+}
+
+.auth-description {
+    color: #929db3;
+    line-height: 1.6;
+    font-size: 13px;
+    margin: 10px 0 25px;
+}
+
+.auth-card label,
+.field label {
+    display: block;
+    font-size: 12px;
+    color: #cbd3e1;
+    margin-bottom: 8px;
+}
+
+.auth-card input,
+.field input {
+    width: 100%;
+    height: 48px;
+    border-radius: 8px;
+    padding: 0 14px;
+    margin-bottom: 18px;
+    background: #0b1220;
+    border: 1px solid #303b53;
+    outline: none;
+    color: white;
+}
+
+.auth-card input:focus,
+.field input:focus {
+    border-color: #946cff;
+    box-shadow: 0 0 0 3px rgba(148, 108, 255, .12);
+}
+
+.auth-card input::placeholder,
+.field input::placeholder {
+    color: #67748d;
+}
+
+.auth-card form button,
+.primary-button {
+    width: 100%;
+    min-height: 48px;
+    border: none;
+    border-radius: 8px;
+    background: linear-gradient(90deg, #8655ff, #663dd0);
+    color: white;
+    font-size: 12px;
+    font-weight: bold;
+    margin-top: 5px;
+    transition: .2s;
+}
+
+.auth-card form button:hover,
+.primary-button:hover {
+    filter: brightness(1.15);
+    transform: translateY(-1px);
+}
+
+button:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}
+
+.auth-message {
+    min-height: 20px;
+    font-size: 12px;
+    margin-top: 15px;
+    line-height: 1.5;
+}
+
+.auth-message.error {
+    color: #ff7777;
+}
+
+.auth-message.success {
+    color: #4dd9a0;
+}
+
+.auth-footer {
+    color: #64718a;
+    text-align: center;
+    font-size: 10px;
+    margin-top: 25px;
+    letter-spacing: 1px;
+}
+
+/* ==================================
+   PAINEL ADMINISTRATIVO
+================================== */
+
+.admin-page {
+    min-height: 100vh;
+}
+
+.admin-header {
+    min-height: 76px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 12px 5%;
+    background: #0d1220;
+    border-bottom: 1px solid #283249;
+}
+
+.admin-header .auth-brand {
+    margin: 0;
+}
+
+.admin-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    color: #aab4c8;
+    font-size: 12px;
+}
+
+.secondary-button,
+.logout-button {
+    text-decoration: none;
+    border: 1px solid #39445e;
+    border-radius: 7px;
+    padding: 10px 14px;
+    background: #192338;
+    color: white;
+    font-size: 11px;
+}
+
+.secondary-button:hover {
+    background: #283653;
+}
+
+.logout-button {
+    background: #3a1c2c;
+    border-color: #5e3044;
+}
+
+.logout-button:hover {
+    background: #722e48;
+}
+
+.admin-container {
+    width: min(1200px, 92%);
+    margin: 45px auto;
+}
+
+.admin-welcome {
+    margin-bottom: 30px;
+}
+
+.admin-welcome h1 {
+    font-size: clamp(25px, 4vw, 35px);
+    margin: 10px 0;
+}
+
+.admin-welcome p {
+    color: #929db3;
+    font-size: 13px;
+}
+
+.admin-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 17px;
+    margin-bottom: 25px;
+}
+
+.stat-card {
+    background: #111827;
+    border: 1px solid #29334a;
+    border-radius: 12px;
+    padding: 22px;
+}
+
+.stat-card span {
+    display: block;
+    color: #929db3;
+    font-size: 12px;
+}
+
+.stat-card strong {
+    display: block;
+    color: #a98cff;
+    font-size: 29px;
+    margin-top: 13px;
+}
+
+.admin-card {
+    margin-bottom: 25px;
+}
+
+.admin-card-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    margin-bottom: 23px;
+}
+
+.admin-card-heading h2 {
+    font-size: 20px;
+    margin-top: 7px;
+}
+
+.create-user-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    align-items: end;
+    gap: 15px;
+}
+
+.create-user-form .field input {
+    margin-bottom: 0;
+}
+
+.create-user-form .primary-button {
+    width: auto;
+    padding: 0 20px;
+    white-space: nowrap;
+}
+
+.table-wrapper {
+    overflow-x: auto;
+}
+
+.users-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 12px;
+}
+
+.users-table th {
+    color: #a98cff;
+    font-weight: bold;
+    padding: 15px 12px;
+    background: #0d1524;
+}
+
+.users-table td {
+    color: #d3daea;
+    padding: 16px 12px;
+    border-bottom: 1px solid #283249;
+    white-space: nowrap;
+}
+
+.users-table td[colspan] {
+    text-align: center;
+    padding: 30px;
+}
+
+.status-badge {
+    padding: 6px 10px;
+    border-radius: 20px;
+    font-size: 10px;
+}
+
+.status-active {
+    color: #50dda5;
+    background: #143b32;
+}
+
+.status-blocked {
+    color: #ff9292;
+    background: #42202b;
+}
+
+.table-action {
+    background: #25314a;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 8px 10px;
+    margin: 2px;
+    font-size: 10px;
+}
+
+.table-action:hover {
+    background: #5940a0;
+}
+
+.table-action.danger {
+    background: #542536;
+}
+
+.table-action.danger:hover {
+    background: #87354c;
+}
+
+@media(max-width: 800px) {
+    .create-user-form {
+        grid-template-columns: 1fr;
+    }
+
+    .create-user-form .primary-button {
+        width: 100%;
+        min-height: 45px;
+    }
+}
+
+@media(max-width: 600px) {
+    .admin-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .admin-header .auth-brand {
+        font-size: 22px;
+    }
+
+    .admin-header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .admin-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .auth-card,
+    .admin-card {
+        padding: 22px;
+    }
+
+    .admin-container {
+        margin: 28px auto;
+    }
+}
+.recuperar-senha {
+    text-align: right;
+    margin: 10px 0 18px;
+}
+
+.recuperar-senha a {
+    color: #8b5cf6;
+    font-size: 13px;
+    text-decoration: none;
+    transition: 0.3s;
+}
+
+.recuperar-senha a:hover {
+    color: #a78bfa;
+    text-decoration: underline;
+}.auth-register {
+    margin-top: 22px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    text-align: center;
+    font-size: 14px;
+    color: #929bb0;
+}
+
+.auth-register a {
+    display: block;
+    margin-top: 8px;
+    color: #a78bfa;
+    font-weight: 700;
+    text-decoration: none;
+    transition: 0.2s;
+}
+
+.auth-register a:hover {
+    color: #ffffff;
+    text-decoration: underline;
+}

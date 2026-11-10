@@ -1,0 +1,62 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Criar conta | LJ Streaming</title>
+    <link rel="stylesheet" href="css/auth.css">
+</head>
+<body>
+    <main class="auth-container">
+        <section class="auth-card">
+            <h1>LJ <span>STREAMING</span></h1>
+            <h2>Criar sua conta</h2>
+            <p>Preencha os dados para começar.</p>
+
+            <form id="registerForm">
+                <input
+                    type="text"
+                    id="username"
+                    placeholder="Nome de usuário (3 a 32 caracteres)"
+                    minlength="3"
+                    maxlength="32"
+                    required
+                >
+
+                <input
+                    type="email"
+                    id="email"
+                    placeholder="Seu e-mail"
+                    required
+                >
+
+                <input
+                    type="password"
+                    id="senha"
+                    placeholder="Crie uma senha"
+                    minlength="8"
+                    maxlength="128"
+                    required
+                >
+
+                <input
+                    type="password"
+                    id="confirmarSenha"
+                    placeholder="Confirme sua senha"
+                    minlength="8"
+                    maxlength="128"
+                    required
+                >
+
+                <button type="submit">CRIAR CONTA</button>
+                <p id="mensagem"></p>
+            </form>
+
+            <p>Já tem uma conta? <a href="/login.html">Entrar</a></p>
+        </section>
+    </main>
+
+    <script src="js/register.js"></script>
+</body>
+</html>

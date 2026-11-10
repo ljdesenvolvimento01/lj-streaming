@@ -1,0 +1,94 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#080b14">
+
+    <title>Entrar - LJ Streaming</title>
+
+    <link rel="stylesheet" href="/css/auth.css">
+    <script src="/js/login.js" defer></script>
+</head>
+
+<body class="auth-page">
+
+    <main class="auth-wrapper">
+
+        <div class="auth-brand">
+            LJ<span>+</span> STREAMING
+        </div>
+
+        <section class="auth-card">
+
+            <div class="auth-icon">▶</div>
+
+            <span class="auth-label">ACESSO À PLATAFORMA</span>
+
+            <h1>Bem-vindo de volta</h1>
+
+            <p class="auth-description">
+                Entre na sua conta para continuar assistindo.
+            </p>
+
+            <form id="login-form">
+
+                <label for="username">Usuário</label>
+
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    placeholder="Digite seu usuário"
+                    autocomplete="username"
+                    maxlength="32"
+                    required
+                >
+
+                <label for="password">Senha</label>
+
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    placeholder="Digite sua senha"
+                    autocomplete="current-password"
+                    required
+                >
+
+                <div class="recuperar-senha">
+                    <a href="/forgot-password.html">
+                        Esqueceu sua senha?
+                    </a>
+                </div>
+
+                <button type="submit" id="login-button">
+                    ENTRAR NA PLATAFORMA
+                </button>
+
+                <p
+                    id="login-message"
+                    class="auth-message"
+                    role="status"
+                    aria-live="polite"
+                ></p>
+
+            </form>
+
+            <!-- ÁREA DE CADASTRO -->
+            <div class="auth-register">
+                <span>Não tem uma conta?</span>
+                <a href="/register.html">Criar minha conta</a>
+            </div>
+
+        </section>
+
+        <footer class="auth-footer">
+            © 2026 LJ STREAMING
+        </footer>
+
+    </main>
+
+</body>
+</html>

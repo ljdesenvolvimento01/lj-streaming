@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#080b14">
+    <title>Administração - LJ Streaming</title>
+
+    <link rel="stylesheet" href="/css/auth.css">
+    <script src="/js/admin.js" defer></script>
+
+    <style>
+        .catalog-admin { margin-top: 28px; }
+        .catalog-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:18px 0; }
+        .catalog-tabs { display:flex; flex-wrap:wrap; gap:8px; }
+        .catalog-tab { border:1px solid rgba(255,255,255,.14); background:#111827; color:#dbe4f0; padding:10px 15px; border-radius:9px; cursor:pointer; }
+        .catalog-tab.active { background:#6d4aff; border-color:#8b73ff; color:#fff; }
+        .catalog-search { flex:1; min-width:190px; padding:12px 14px; border-radius:9px; border:1px solid rgba(255,255,255,.15); background:#0b1220; color:#fff; }
+        .catalog-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(245px,1fr)); gap:12px; margin-top:16px; }
+        .catalog-item { background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.09); border-radius:12px; padding:14px; min-width:0; }
+        .catalog-item-title { color:#fff; font-weight:700; overflow-wrap:anywhere; margin-bottom:8px; }
+        .catalog-item-meta { color:#9caec5; font-size:12px; margin-bottom:12px; }
+        .catalog-item-bottom { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .access-pill { display:inline-flex; align-items:center; border-radius:20px; padding:5px 10px; font-size:11px; font-weight:800; letter-spacing:.04em; }
+        .access-free { color:#86efac; background:rgba(34,197,94,.13); }
+        .access-premium { color:#fcd34d; background:rgba(245,158,11,.13); }
+        .catalog-toggle { border:0; border-radius:8px; padding:9px 11px; cursor:pointer; color:#fff; background:#5540c8; font-weight:700; }
+        .catalog-toggle:disabled { opacity:.55; cursor:wait; }
+        .catalog-state { color:#aab8ca; padding:16px 2px; }
+        .catalog-hint { color:#9caec5; font-size:13px; line-height:1.5; }
+        @media (max-width:600px) {
+            .catalog-item-bottom { align-items:flex-start; flex-direction:column; }
+            .catalog-toggle { width:100%; }
+        }
+    </style>
+</head>
+
+<body class="admin-page">
+    <header class="admin-header">
+        <div class="auth-brand">LJ<span>+</span> STREAMING</div>
+        <div class="admin-header-actions">
+            <span id="admin-name">Administrador</span>
+            <a href="/" class="secondary-button">Abrir streaming</a>
+            <button id="logout-button" class="logout-button" type="button">Sair</button>
+        </div>
+    </header>
+
+    <main class="admin-container">
+        <section class="admin-welcome">
+            <span class="auth-label">CENTRAL DE CONTROLE</span>
+            <h1>Painel administrativo</h1>
+            <p>Gerencie usuários e defina quais conteúdos são gratuitos ou Premium.</p>
+        </section>
+
+        <section class="admin-stats">
+            <div class="stat-card">
+                <span>Total de usuários</span>
+                <strong id="total-users">0</strong>
+            </div>
+            <div class="stat-card">
+                <span>Usuários ativos</span>
+                <strong id="active-users">0</strong>
+            </div>
+            <div class="stat-card">
+                <span>Usuários bloqueados</span>
+                <strong id="blocked-users">0</strong>
+            </div>
+        </section>
+
+        <section class="admin-card">
+            <div class="admin-card-heading">
+                <div>
+                    <span class="auth-label">NOVO CADASTRO</span>
+                    <h2>Criar usuário</h2>
+                </div>
+            </div>
+
+            <form id="create-user-form" class="create-user-form">
+                <div class="field">
+                    <label for="new-username">Nome de usuário</label>
+                    <input id="new-username" type="text" placeholder="Exemplo: usuario01"
+                           minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"
+                           autocomplete="off" required>
+                </div>
+                <div class="field">
+                    <label for="new-password">Senha inicial</label>
+                    <input id="new-password" type="password" placeholder="Mínimo de 8 caracteres"
+                           minlength="8" maxlength="128" autocomplete="new-password" required>
+                </div>
+                <button type="submit" id="create-button" class="primary-button">+ Cadastrar usuário</button>
+            </form>
+            <p id="admin-message" class="auth-message" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="admin-card">
+            <div class="admin-card-heading">
+                <div>
+                    <span class="auth-label">CONTAS CADASTRADAS</span>
+                    <h2>Gerenciar usuários</h2>
+                </div>
+                <button id="refresh-users" class="secondary-button" type="button">Atualizar</button>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="users-table">
+                    <thead>
+                        <tr>
+                            <th>Usuário</th>
+                            <th>Tipo</th>
+                            <th>Status</th>
+                            <th>Cadastro</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-list">
+                        <tr><td colspan="5">Carregando usuários...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="admin-card catalog-admin">
+            <div class="admin-card-heading">
+                <div>
+                    <span class="auth-label">CONTROLE DE ACESSO</span>
+                    <h2>Gerenciar catálogo</h2>
+                    <p class="catalog-hint">Todo conteúdo começa como PREMIUM. Use o botão de cada item para liberar ou voltar a exigir assinatura.</p>
+                </div>
+                <button id="refresh-catalog" class="secondary-button" type="button">Atualizar catálogo</button>
+            </div>
+
+            <div class="catalog-toolbar">
+                <div class="catalog-tabs" role="tablist" aria-label="Tipo de conteúdo">
+                    <button class="catalog-tab active" type="button" data-catalog-type="live">TV ao vivo</button>
+                    <button class="catalog-tab" type="button" data-catalog-type="movies">Filmes</button>
+                    <button class="catalog-tab" type="button" data-catalog-type="series">Séries</button>
+                </div>
+                <input id="catalog-search" class="catalog-search" type="search"
+                       placeholder="Buscar conteúdo pelo nome..." autocomplete="off">
+            </div>
+
+            <p id="catalog-message" class="catalog-state" role="status" aria-live="polite">Selecione uma categoria para carregar os conteúdos.</p>
+            <div id="catalog-list" class="catalog-list"></div>
+        </section>
+    </main>
+</body>
+</html>

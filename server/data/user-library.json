@@ -1,0 +1,71 @@
+{
+  "e16167c3-c967-4c5a-bfe0-ea7ed36bfe5c": {
+    "favorites": [],
+    "progress": [
+      {
+        "id": "1103",
+        "type": "movies",
+        "title": "Desespero",
+        "poster": "",
+        "position": 3.282323,
+        "duration": 7873.490625,
+        "progressPercent": 0,
+        "updatedAt": "2026-11-10T07:11:39.416Z"
+      }
+    ]
+  },
+  "admin": {
+    "favorites": [],
+    "progress": [
+      {
+        "id": "1102",
+        "type": "movies",
+        "title": "O Santo",
+        "poster": "",
+        "position": 57.356165,
+        "duration": 6975.104,
+        "progressPercent": 1,
+        "updatedAt": "2026-11-10T16:26:04.353Z"
+      }
+    ]
+  },
+  "9c2ba4f4-6ca0-48b9-9fe3-b8d64bc26a64": {
+    "favorites": [],
+    "progress": []
+  },
+  "657c789e-47d8-4647-8169-c3e692207fa1": {
+    "favorites": [],
+    "progress": [
+      {
+        "id": "1104",
+        "type": "movies",
+        "title": "Debi & Lóide 2",
+        "poster": "",
+        "position": 22.867598,
+        "duration": 6539.825111,
+        "progressPercent": 0,
+        "updatedAt": "2026-11-10T13:07:56.505Z"
+      },
+      {
+        "id": "1101",
+        "type": "movies",
+        "title": "A Verdadeira História do Roubo do Século",
+        "poster": "",
+        "position": 4.085231,
+        "duration": 6600.703667,
+        "progressPercent": 0,
+        "updatedAt": "2026-11-10T16:24:03.794Z"
+      },
+      {
+        "id": "350730",
+        "type": "series",
+        "title": "Resident Evil: No Escuro Absoluto - Episódio 1",
+        "poster": "",
+        "position": 80.762984,
+        "duration": 1562.773,
+        "progressPercent": 5,
+        "updatedAt": "2026-11-10T16:20:47.254Z"
+      }
+    ]
+  }
+}
