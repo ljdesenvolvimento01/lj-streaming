@@ -371,10 +371,33 @@ function obterPoster(item) {
           return item?.stream_icon || item?.cover || item?.cover_big || item?.movie_image || item?.poster || "";
 }
 
+
 function adicionarSeloAcesso(poster, access) {
-          const selo = criarElemento("span", `access-badge ${access === "free" ? "access-free" : "access-premium"}`, access === "free" ? "GRÁTIS" : "PREMIUM");
-          poster.appendChild(selo);
+    const assinante = assinaturaAtual?.active === true;
+
+    const texto = assinante
+        ? "ASSINANTE"
+        : access === "free"
+            ? "GRÁTIS"
+            : "PREMIUM";
+
+    const classe = assinante
+        ? "access-assinante"
+        : access === "free"
+            ? "access-free"
+            : "access-premium";
+
+    const selo = criarElemento(
+        "span",
+        `access-badge ${classe}`,
+        texto
+    );
+
+    poster.appendChild(selo);
 }
+
+
+
 
 function atualizarNavAtiva(page) {
           document.querySelectorAll(".nav-item").forEach(button => {
@@ -2603,16 +2626,20 @@ async function inicializarConta() {
         carregarPagina("home");
 
         // Consulta assinatura e biblioteca em segundo plano.
-        consultarAssinatura()
-            .then(resultado => {
-                assinaturaAtual = resultado;
-            })
-            .catch(error => {
-                console.error(
-                    "Erro ao consultar assinatura:",
-                    error
-                );
-            });
+        
+consultarAssinatura()
+    .then(resultado => {
+        assinaturaAtual = resultado;
+
+        // Atualiza os selos dos filmes e séries.
+        renderizarCatalogo();
+    })
+    .catch(error => {
+        console.error(
+            "Erro ao consultar assinatura:",
+            error
+        );
+    });
 
         carregarBiblioteca()
             .then(() => {
@@ -2644,6 +2671,7 @@ function adicionarEstilosBiblioteca() {
                     .access-badge { position: absolute; top: 9px; left: 9px; z-index: 2; padding: 5px 8px; border-radius: 6px; font-size: 10px; font-weight: 800; letter-spacing: .4px; }
                     .access-free { background: #16a34a; color: #fff; }
                     .access-premium { background: #d6a637; color: #171717; }
+                    .access-assinante { background: #16a34a; color: #fff; border: 1px solid #22c55e; box-shadow: 0 0 10px rgba(22,163,74,.45); }
                     .favorite-toggle { position: absolute; top: 8px; right: 8px; z-index: 3; width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(10,14,24,.88); color: #ff5277; font-size: 22px; cursor: pointer; }
                     .library-remove { margin: 8px 10px 12px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 7px; background: transparent; color: inherit; cursor: pointer; }
                     .watch-progress { height: 5px; margin: 8px 10px 12px; background: rgba(255,255,255,.18); border-radius: 9px; overflow: hidden; }
