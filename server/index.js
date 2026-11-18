@@ -9,6 +9,7 @@ require("dotenv").config();
 
 const express = require("express");
 const axios = require("axios");
+const { pool } = require("./db");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -96,6 +97,122 @@ if (IS_PRODUCTION) {
 // ======================================================
 // BANCO DE USUARIOS
 // ======================================================
+// ======================================================
+// POSTGRESQL - USUARIOS
+// ======================================================
+
+function mapearUsuario(row) {
+    if (!row) return null;
+
+    const dados = row.data || {};
+
+    return {
+        ...dados,
+        id: row.id,
+        username: row.username,
+        email: row.email || "",
+        passwordHash: row.password_hash,
+        role: row.role,
+        active: row.active,
+        authVersion: row.auth_version,
+        createdAt: row.created_at,
+        plan: row.plan,
+        subscriptionStatus: row.subscription_status || "inactive",
+        subscriptionExpiresAt: row.subscription_expires_at
+    };
+}
+
+async function buscarUsuarioPorId(id) {
+    const resultado = await pool.query(
+        "SELECT * FROM users WHERE id = $1 LIMIT 1",
+        [id]
+    );
+
+    return mapearUsuario(resultado.rows[0]);
+}
+
+async function buscarUsuarioPorUsername(username) {
+    const resultado = await pool.query(
+        "SELECT * FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1",
+        [username]
+    );
+
+    return mapearUsuario(resultado.rows[0]);
+}
+
+async function listarUsuariosPostgres() {
+    const resultado = await pool.query(
+        "SELECT * FROM users ORDER BY created_at DESC"
+    );
+
+    return resultado.rows.map(mapearUsuario);
+}
+// ======================================================
+// PRESERVAR DADOS EXTRAS DO USUARIO NO POSTGRESQL
+// ======================================================
+
+function dadosExtrasUsuario(usuario) {
+    const camposDoBanco = new Set([
+        "id",
+        "username",
+        "email",
+        "passwordHash",
+        "role",
+        "active",
+        "authVersion",
+        "createdAt",
+        "plan",
+        "subscriptionStatus",
+        "subscriptionExpiresAt",
+        "data"
+    ]);
+
+    const dados = { ...(usuario.data || {}) };
+
+    for (const [chave, valor] of Object.entries(usuario)) {
+        if (!camposDoBanco.has(chave)) {
+            dados[chave] = valor;
+        }
+    }
+
+    return dados;
+}   
+
+async function salvarUsuarioPostgres(usuario) {
+    await pool.query(
+        `INSERT INTO users (
+            id, username, email, password_hash, role,
+            active, auth_version, plan, subscription_status,
+            subscription_expires_at, data
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        ON CONFLICT (id) DO UPDATE SET
+            username = EXCLUDED.username,
+            email = EXCLUDED.email,
+            password_hash = EXCLUDED.password_hash,
+            role = EXCLUDED.role,
+            active = EXCLUDED.active,
+            auth_version = EXCLUDED.auth_version,
+            plan = EXCLUDED.plan,
+            subscription_status = EXCLUDED.subscription_status,
+            subscription_expires_at = EXCLUDED.subscription_expires_at,
+            data = EXCLUDED.data,
+            updated_at = NOW()`,
+        [
+            usuario.id,
+            usuario.username,
+            usuario.email || null,
+            usuario.passwordHash,
+            usuario.role || "user",
+            usuario.active !== false,
+            Number(usuario.authVersion || 0),
+            usuario.plan || null,
+            usuario.subscriptionStatus || "inactive",
+            usuario.subscriptionExpiresAt || null,
+            JSON.stringify(dadosExtrasUsuario(usuario))
+        ]
+    );
+}
 
 function lerUsuarios() {
     try {
@@ -174,21 +291,38 @@ function usuarioPublico(usuario) {
 // CRIAR ADMINISTRADOR INICIAL
 // ======================================================
 
+
 async function prepararAdministrador() {
-    const usuarios = lerUsuarios();
+    let admin = await buscarUsuarioPorId("admin");
 
-    let admin = usuarios.find(user => user.id === "admin" || user.role === "admin");
+    if (!admin) {
+        const resultado = await pool.query(
+            `SELECT * FROM users
+             WHERE role = 'admin'
+             ORDER BY created_at ASC
+             LIMIT 1`
+        );
 
-    const colisao = usuarios.find(user =>
-        user.id !== admin?.id &&
-        String(user.username).toLowerCase() === ADMIN_USERNAME.toLowerCase()
+        admin = mapearUsuario(resultado.rows[0]);
+    }
+
+    const colisao = await pool.query(
+        `SELECT id FROM users
+         WHERE LOWER(username) = LOWER($1)
+         AND id <> $2
+         LIMIT 1`,
+        [ADMIN_USERNAME, admin?.id || "admin"]
     );
 
-    if (colisao) {
+    if (colisao.rows.length > 0) {
         throw new Error("ADMIN_USERNAME já pertence a outro usuário.");
     }
 
     if (!admin) {
+        if (!ADMIN_PASSWORD) {
+            throw new Error("ADMIN_PASSWORD não configurada no .env.");
+        }
+
         admin = {
             id: "admin",
             username: ADMIN_USERNAME,
@@ -202,24 +336,23 @@ async function prepararAdministrador() {
             subscriptionStatus: "active",
             subscriptionExpiresAt: null
         };
-
-        usuarios.push(admin);
     } else {
         admin.id = "admin";
         admin.username = ADMIN_USERNAME;
         admin.role = "admin";
         admin.active = true;
         admin.authVersion = Number(admin.authVersion || 0);
-        admin.createdAt = admin.createdAt || new Date().toISOString();
         admin.email = admin.email || "";
         admin.plan = "ADMIN";
         admin.subscriptionStatus = "active";
         admin.subscriptionExpiresAt = null;
     }
 
-    salvarUsuarios(usuarios);
-    console.log("Administrador inicial configurado.");
+    await salvarUsuarioPostgres(admin);
+
+    console.log("Administrador inicial configurado no PostgreSQL.");
 }
+
 
 // ======================================================
 // CONFIGURACAO DE EMAIL
@@ -260,11 +393,12 @@ function destruirSessao(req) {
     if (req.session) req.session.destroy(() => {});
 }
 
-function localizarUsuarioSessao(req) {
+async function localizarUsuarioSessao(req) {
     const id = req.session?.user?.id;
+
     if (!id) return null;
 
-    const usuario = lerUsuarios().find(user => user.id === id);
+    const usuario = await buscarUsuarioPorId(id);
 
     if (!usuario || !usuario.active) return null;
 
@@ -275,7 +409,68 @@ function localizarUsuarioSessao(req) {
 
     return usuario;
 }
+// ======================================================
+// VERIFICACAO DE ASSINATURA E ACESSO
+// ======================================================
 
+function assinaturaEstaAtiva(usuario) {
+    if (!usuario) return false;
+
+    if (usuario.role === "admin") return true;
+
+    if (usuario.subscriptionStatus !== "active") return false;
+
+    if (!usuario.subscriptionExpiresAt) return false;
+
+    const expiracao = new Date(usuario.subscriptionExpiresAt).getTime();
+
+    return Number.isFinite(expiracao) && expiracao > Date.now();
+}
+
+async function exigirAcessoConteudo(tipo, id, usuario) {
+    if (!usuario) return false;
+
+    return sistemaCatalogo.podeAcessar(
+        usuario,
+        tipo,
+        String(id),
+        assinaturaEstaAtiva(usuario)
+    );
+}
+
+function responderAcessoNegado(res) {
+    return res.status(403).json({
+        erro: "Este conteúdo é Premium. Ative sua assinatura LJ PREMIUM para assistir.",
+        codigo: "ASSINATURA_NECESSARIA"
+    });
+}
+
+// ======================================================
+// MIDDLEWARES DE AUTENTICACAO
+// ======================================================
+
+async function exigirAutenticacao(req, res, next) {
+    try {
+        const usuario = await localizarUsuarioSessao(req);
+
+        if (!usuario) {
+            destruirSessao(req);
+
+            return res.status(401).json({
+                erro: "Sessão inválida ou expirada. Faça login novamente."
+            });
+        }
+
+        req.currentUser = usuario;
+        next();
+    } catch (error) {
+        console.error("Erro ao verificar sessão:", error.message);
+
+        return res.status(500).json({
+            erro: "Erro ao verificar autenticação."
+        });
+    }
+}
 // ======================================================
 // AUTORIZACAO DE ADMINISTRADOR
 // ======================================================
@@ -303,7 +498,9 @@ function exigirAdministrador(req, res, next) {
 const apiClient = axios.create({
     timeout: 20000,
     maxRedirects: 5,
-    headers: { Accept: "application/json" }
+    headers: {
+        Accept: "application/json"
+    }
 });
 
 async function consultarAPI(params = {}) {
@@ -319,97 +516,37 @@ async function consultarAPI(params = {}) {
 }
 
 // ======================================================
-// SISTEMA DE PAGAMENTOS - LJ PREMIUM
-// ======================================================
-
-const criarSistemaPagamentos = require("./payment-system");
-
-const sistemaPagamentos = criarSistemaPagamentos({
-    lerUsuarios,
-    salvarUsuarios,
-    localizarUsuarioSessao,
-    dataDir: DATA_DIR,
-    appBaseUrl: APP_BASE_URL
-});
-
-// ======================================================
 // SISTEMA DE CATALOGO
 // ======================================================
 
 const criarSistemaCatalogo = require("./catalog-system");
 
 const sistemaCatalogo = criarSistemaCatalogo({
-    dataDir: DATA_DIR,
+    pool,
     consultarAPI,
     exigirAdministrador
 });
 
-// ======================================================
-// VERIFICACAO DE ASSINATURA E ACESSO
-// ======================================================
-
-function assinaturaEstaAtiva(usuario) {
-    if (!usuario) return false;
-
-    if (usuario.role === "admin") return true;
-
-    if (usuario.subscriptionStatus !== "active") return false;
-
-    if (!usuario.subscriptionExpiresAt) return false;
-
-    const expiracao = new Date(usuario.subscriptionExpiresAt).getTime();
-
-    return Number.isFinite(expiracao) && expiracao > Date.now();
-}
-
-function exigirAcessoConteudo(tipo, id, usuario) {
-    if (!usuario) return false;
-
-    return sistemaCatalogo.podeAcessar(
-        usuario,
-        tipo,
-        String(id),
-        assinaturaEstaAtiva(usuario)
-    );
-}
-
-function responderAcessoNegado(res) {
-    return res.status(403).json({
-        erro: "Este conteúdo é Premium. Ative sua assinatura LJ PREMIUM para assistir.",
-        codigo: "ASSINATURA_NECESSARIA"
-    });
-}
 
 // ======================================================
-// MIDDLEWARES DE AUTENTICACAO
+// SISTEMA DE PAGAMENTOS - POSTGRESQL
 // ======================================================
 
-function exigirAutenticacao(req, res, next) {
+const criarSistemaPagamentos = require("./payment-system");
+
+const sistemaPagamentos = criarSistemaPagamentos({
+    pool,
+    localizarUsuarioSessao,
+    appBaseUrl: APP_BASE_URL
+});
+
+// ======================================================
+// AUTENTICACAO DE PAGINAS
+// ======================================================
+
+async function exigirLoginPagina(req, res, next) {
     try {
-        const usuario = localizarUsuarioSessao(req);
-
-        if (!usuario) {
-            destruirSessao(req);
-
-            return res.status(401).json({
-                erro: "Sessão inválida ou expirada. Faça login novamente."
-            });
-        }
-
-        req.currentUser = usuario;
-        next();
-    } catch (error) {
-        console.error("Erro ao verificar sessão:", error.message);
-
-        return res.status(500).json({
-            erro: "Erro ao verificar autenticação."
-        });
-    }
-}
-
-function exigirLoginPagina(req, res, next) {
-    try {
-        const usuario = localizarUsuarioSessao(req);
+        const usuario = await localizarUsuarioSessao(req);
 
         if (!usuario) {
             destruirSessao(req);
@@ -420,7 +557,7 @@ function exigirLoginPagina(req, res, next) {
         next();
     } catch (error) {
         console.error(error.message);
-        res.status(500).send("Erro ao verificar sessão.");
+        return res.status(500).send("Erro ao verificar sessão.");
     }
 }
 
@@ -472,6 +609,11 @@ const limiteRedefinicao = rateLimit({
 // LOGIN
 // ======================================================
 
+
+// ======================================================
+// LOGIN
+// ======================================================
+
 app.post("/api/auth/login", limiteLogin, async (req, res) => {
     try {
         const username = String(req.body?.username || "").trim();
@@ -481,9 +623,7 @@ app.post("/api/auth/login", limiteLogin, async (req, res) => {
             return res.status(400).json({ erro: "Informe usuário e senha." });
         }
 
-        const usuario = lerUsuarios().find(user =>
-            String(user.username).toLowerCase() === username.toLowerCase()
-        );
+        const usuario = await buscarUsuarioPorUsername(username);
 
         if (!usuario || !usuario.active) {
             return res.status(401).json({ erro: "Usuário ou senha inválidos." });
@@ -557,14 +697,15 @@ app.post("/api/auth/register", limiteCadastro, async (req, res) => {
             return res.status(400).json({ erro: "As senhas não coincidem." });
         }
 
-        const usuarios = lerUsuarios();
-
-        const duplicado = usuarios.some(user =>
-            String(user.username).toLowerCase() === username.toLowerCase() ||
-            (user.email && String(user.email).toLowerCase() === email)
+        const existente = await pool.query(
+            `SELECT id FROM users
+             WHERE LOWER(username) = LOWER($1)
+                OR LOWER(email) = LOWER($2)
+             LIMIT 1`,
+            [username, email]
         );
 
-        if (duplicado) {
+        if (existente.rows.length > 0) {
             return res.status(409).json({ erro: "Usuário ou e-mail já cadastrado." });
         }
 
@@ -582,13 +723,11 @@ app.post("/api/auth/register", limiteCadastro, async (req, res) => {
             subscriptionExpiresAt: null
         };
 
-        usuarios.push(novoUsuario);
-        salvarUsuarios(usuarios);
+        await salvarUsuarioPostgres(novoUsuario);
 
         req.session.regenerate(error => {
             if (error) {
                 console.error(error.message);
-
                 return res.status(201).json({
                     sucesso: true,
                     mensagem: "Conta criada. Faça login para continuar."
@@ -605,7 +744,6 @@ app.post("/api/auth/register", limiteCadastro, async (req, res) => {
             req.session.save(saveError => {
                 if (saveError) {
                     console.error(saveError.message);
-
                     return res.status(201).json({
                         sucesso: true,
                         mensagem: "Conta criada. Faça login para continuar."
@@ -619,6 +757,12 @@ app.post("/api/auth/register", limiteCadastro, async (req, res) => {
             });
         });
     } catch (error) {
+        if (error.code === "23505") {
+            return res.status(409).json({
+                erro: "Usuário ou e-mail já cadastrado."
+            });
+        }
+
         console.error("Erro no cadastro:", error.message);
         res.status(500).json({ erro: "Não foi possível criar sua conta." });
     }
@@ -626,6 +770,11 @@ app.post("/api/auth/register", limiteCadastro, async (req, res) => {
 
 // ======================================================
 // RECUPERACAO DE SENHA POR EMAIL
+// ======================================================
+
+
+// ======================================================
+// RECUPERACAO DE SENHA POR EMAIL - POSTGRESQL
 // ======================================================
 
 app.post("/api/auth/forgot-password", limiteRecuperacao, async (req, res) => {
@@ -639,14 +788,15 @@ app.post("/api/auth/forgot-password", limiteRecuperacao, async (req, res) => {
 
         if (!emailValido(email)) return res.json(respostaPadrao);
 
-        const transporter = obterTransportadorEmail();
-        const usuarios = lerUsuarios();
-
-        const usuario = usuarios.find(user =>
-            user.active &&
-            user.email &&
-            String(user.email).toLowerCase() === email
+        const resultado = await pool.query(
+            `SELECT * FROM users
+             WHERE LOWER(email) = LOWER($1)
+             AND active = TRUE
+             LIMIT 1`,
+            [email]
         );
+
+        const usuario = mapearUsuario(resultado.rows[0]);
 
         if (!usuario) return res.json(respostaPadrao);
 
@@ -656,7 +806,9 @@ app.post("/api/auth/forgot-password", limiteRecuperacao, async (req, res) => {
         usuario.resetCodeExpiresAt = Date.now() + 15 * 60 * 1000;
         usuario.resetAttempts = 0;
 
-        salvarUsuarios(usuarios);
+        await salvarUsuarioPostgres(usuario);
+
+        const transporter = obterTransportadorEmail();
 
         const resetUrl = new URL("/reset-password.html", APP_BASE_URL);
         resetUrl.searchParams.set("email", email);
@@ -694,7 +846,8 @@ Se você não solicitou esta recuperação, ignore esta mensagem.
             delete usuario.resetCodeHash;
             delete usuario.resetCodeExpiresAt;
             delete usuario.resetAttempts;
-            salvarUsuarios(usuarios);
+
+            await salvarUsuarioPostgres(usuario);
 
             console.error("Erro ao enviar e-mail:", mailError.message);
 
@@ -704,6 +857,7 @@ Se você não solicitou esta recuperação, ignore esta mensagem.
         }
 
         res.json(respostaPadrao);
+
     } catch (error) {
         console.error("Erro na recuperação:", error.message);
 
@@ -714,7 +868,7 @@ Se você não solicitou esta recuperação, ignore esta mensagem.
 });
 
 // ======================================================
-// REDEFINIR SENHA
+// REDEFINIR SENHA - POSTGRESQL
 // ======================================================
 
 app.post("/api/auth/reset-password", limiteRedefinicao, async (req, res) => {
@@ -735,13 +889,15 @@ app.post("/api/auth/reset-password", limiteRedefinicao, async (req, res) => {
             return res.status(400).json({ erro: "A nova senha deve ter de 8 a 128 caracteres." });
         }
 
-        const usuarios = lerUsuarios();
-
-        const usuario = usuarios.find(user =>
-            user.active &&
-            user.email &&
-            String(user.email).toLowerCase() === email
+        const resultado = await pool.query(
+            `SELECT * FROM users
+             WHERE LOWER(email) = LOWER($1)
+             AND active = TRUE
+             LIMIT 1`,
+            [email]
         );
+
+        const usuario = mapearUsuario(resultado.rows[0]);
 
         if (!usuario || !usuario.resetCodeHash) {
             return res.status(400).json({ erro: "Código inválido ou expirado." });
@@ -754,7 +910,8 @@ app.post("/api/auth/reset-password", limiteRedefinicao, async (req, res) => {
             delete usuario.resetCodeHash;
             delete usuario.resetCodeExpiresAt;
             delete usuario.resetAttempts;
-            salvarUsuarios(usuarios);
+
+            await salvarUsuarioPostgres(usuario);
 
             return res.status(400).json({
                 erro: "Código inválido ou expirado. Solicite outro."
@@ -777,7 +934,7 @@ app.post("/api/auth/reset-password", limiteRedefinicao, async (req, res) => {
                 delete usuario.resetAttempts;
             }
 
-            salvarUsuarios(usuarios);
+            await salvarUsuarioPostgres(usuario);
 
             return res.status(400).json({
                 erro: "Código inválido ou expirado."
@@ -791,21 +948,32 @@ app.post("/api/auth/reset-password", limiteRedefinicao, async (req, res) => {
         delete usuario.resetCodeExpiresAt;
         delete usuario.resetAttempts;
 
-        salvarUsuarios(usuarios);
+        await salvarUsuarioPostgres(usuario);
 
         res.json({
             sucesso: true,
             mensagem: "Senha redefinida com sucesso. Faça login novamente."
         });
+
     } catch (error) {
         console.error("Erro ao redefinir senha:", error.message);
-        res.status(500).json({ erro: "Não foi possível redefinir sua senha." });
+        res.status(500).json({
+            erro: "Não foi possível redefinir sua senha."
+        });
     }
 });
 
 // ======================================================
 // STATUS PUBLICO
 // ======================================================
+// Verificação pública de saúde da API
+app.get("/api/health", (req, res) => {
+    res.status(200).json({
+        servidor: "LJ Streaming",
+        status: "online"
+    });
+});
+
 
 app.get("/api/status", (req, res) => {
     res.json({
@@ -862,13 +1030,23 @@ app.post("/api/auth/logout", (req, res) => {
     });
 });
 
+
 // ======================================================
-// ADMINISTRACAO DE USUARIOS
+// ADMINISTRACAO DE USUARIOS - POSTGRESQL
 // ======================================================
 
 // LISTAR USUARIOS
-app.get("/api/admin/users", exigirAdministrador, (req, res) => {
-    res.json(lerUsuarios().map(usuarioPublico));
+app.get("/api/admin/users", exigirAdministrador, async (req, res) => {
+    try {
+        const usuarios = await listarUsuariosPostgres();
+
+        res.json(usuarios.map(usuarioPublico));
+    } catch (error) {
+        console.error("Erro ao listar usuários:", error.message);
+        res.status(500).json({
+            erro: "Não foi possível listar os usuários."
+        });
+    }
 });
 
 // CRIAR USUARIO
@@ -879,26 +1057,35 @@ app.post("/api/admin/users", exigirAdministrador, async (req, res) => {
         const password = String(req.body?.password || "");
 
         if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username)) {
-            return res.status(400).json({ erro: "Nome de usuário inválido." });
+            return res.status(400).json({
+                erro: "Nome de usuário inválido."
+            });
         }
 
         if (email && !emailValido(email)) {
-            return res.status(400).json({ erro: "Informe um e-mail válido." });
+            return res.status(400).json({
+                erro: "Informe um e-mail válido."
+            });
         }
 
         if (password.length < 8 || password.length > 128) {
-            return res.status(400).json({ erro: "A senha deve ter de 8 a 128 caracteres." });
+            return res.status(400).json({
+                erro: "A senha deve ter de 8 a 128 caracteres."
+            });
         }
 
-        const usuarios = lerUsuarios();
-
-        const duplicado = usuarios.some(user =>
-            String(user.username).toLowerCase() === username.toLowerCase() ||
-            (email && user.email && String(user.email).toLowerCase() === email)
+        const duplicado = await pool.query(
+            `SELECT id FROM users
+             WHERE LOWER(username) = LOWER($1)
+                OR ($2 <> '' AND LOWER(email) = LOWER($2))
+             LIMIT 1`,
+            [username, email]
         );
 
-        if (duplicado) {
-            return res.status(409).json({ erro: "Usuário ou e-mail já cadastrado." });
+        if (duplicado.rows.length > 0) {
+            return res.status(409).json({
+                erro: "Usuário ou e-mail já cadastrado."
+            });
         }
 
         const novoUsuario = {
@@ -915,117 +1102,169 @@ app.post("/api/admin/users", exigirAdministrador, async (req, res) => {
             subscriptionExpiresAt: null
         };
 
-        usuarios.push(novoUsuario);
-        salvarUsuarios(usuarios);
+        await salvarUsuarioPostgres(novoUsuario);
 
         res.status(201).json({
             sucesso: true,
             user: usuarioPublico(novoUsuario)
         });
+
     } catch (error) {
+        if (error.code === "23505") {
+            return res.status(409).json({
+                erro: "Usuário ou e-mail já cadastrado."
+            });
+        }
+
         console.error("Erro ao criar usuário:", error.message);
-        res.status(500).json({ erro: "Não foi possível criar o usuário." });
+
+        res.status(500).json({
+            erro: "Não foi possível criar o usuário."
+        });
     }
 });
 
 // BLOQUEAR / DESBLOQUEAR USUARIO
-app.patch("/api/admin/users/:id", exigirAdministrador, (req, res) => {
-    const { id } = req.params;
-    const { active } = req.body || {};
+app.patch("/api/admin/users/:id", exigirAdministrador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { active } = req.body || {};
 
-    if (typeof active !== "boolean") {
-        return res.status(400).json({
-            erro: "Informe active como verdadeiro ou falso."
+        if (typeof active !== "boolean") {
+            return res.status(400).json({
+                erro: "Informe active como verdadeiro ou falso."
+            });
+        }
+
+        const usuario = await buscarUsuarioPorId(id);
+
+        if (!usuario) {
+            return res.status(404).json({
+                erro: "Usuário não encontrado."
+            });
+        }
+
+        if (usuario.role === "admin") {
+            return res.status(403).json({
+                erro: "Não é permitido bloquear o administrador."
+            });
+        }
+
+        usuario.active = active;
+        usuario.authVersion = Number(usuario.authVersion || 0) + 1;
+
+        await salvarUsuarioPostgres(usuario);
+
+        res.json({
+            sucesso: true,
+            mensagem: active ? "Usuário desbloqueado." : "Usuário bloqueado.",
+            user: usuarioPublico(usuario)
+        });
+
+    } catch (error) {
+        console.error("Erro ao atualizar usuário:", error.message);
+
+        res.status(500).json({
+            erro: "Não foi possível atualizar o usuário."
         });
     }
-
-    const usuarios = lerUsuarios();
-    const usuario = usuarios.find(user => user.id === id);
-
-    if (!usuario) {
-        return res.status(404).json({ erro: "Usuário não encontrado." });
-    }
-
-    if (usuario.role === "admin") {
-        return res.status(403).json({
-            erro: "Não é permitido bloquear o administrador."
-        });
-    }
-
-    usuario.active = active;
-    salvarUsuarios(usuarios);
-
-    res.json({
-        sucesso: true,
-        mensagem: active ? "Usuário desbloqueado." : "Usuário bloqueado.",
-        user: usuarioPublico(usuario)
-    });
 });
 
 // ALTERAR EMAIL DE RECUPERACAO
-app.patch("/api/admin/users/:id/email", exigirAdministrador, (req, res) => {
-    const { id } = req.params;
-    const email = String(req.body?.email || "").trim().toLowerCase();
+app.patch("/api/admin/users/:id/email", exigirAdministrador, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const email = String(req.body?.email || "").trim().toLowerCase();
 
-    if (!emailValido(email)) {
-        return res.status(400).json({ erro: "Informe um e-mail válido." });
-    }
+        if (!emailValido(email)) {
+            return res.status(400).json({
+                erro: "Informe um e-mail válido."
+            });
+        }
 
-    const usuarios = lerUsuarios();
-    const usuario = usuarios.find(user => user.id === id);
+        const usuario = await buscarUsuarioPorId(id);
 
-    if (!usuario) {
-        return res.status(404).json({ erro: "Usuário não encontrado." });
-    }
+        if (!usuario) {
+            return res.status(404).json({
+                erro: "Usuário não encontrado."
+            });
+        }
 
-    const duplicado = usuarios.some(user =>
-        user.id !== id &&
-        user.email &&
-        String(user.email).toLowerCase() === email
-    );
+        const duplicado = await pool.query(
+            `SELECT id FROM users
+             WHERE LOWER(email) = LOWER($1)
+             AND id <> $2
+             LIMIT 1`,
+            [email, id]
+        );
 
-    if (duplicado) {
-        return res.status(409).json({
-            erro: "Este e-mail já pertence a outra conta."
+        if (duplicado.rows.length > 0) {
+            return res.status(409).json({
+                erro: "Este e-mail já pertence a outra conta."
+            });
+        }
+
+        usuario.email = email;
+
+        await salvarUsuarioPostgres(usuario);
+
+        res.json({
+            sucesso: true,
+            mensagem: "E-mail atualizado.",
+            user: usuarioPublico(usuario)
+        });
+
+    } catch (error) {
+        console.error("Erro ao alterar e-mail:", error.message);
+
+        res.status(500).json({
+            erro: "Não foi possível atualizar o e-mail."
         });
     }
-
-    usuario.email = email;
-    salvarUsuarios(usuarios);
-
-    res.json({
-        sucesso: true,
-        mensagem: "E-mail atualizado.",
-        user: usuarioPublico(usuario)
-    });
 });
 
 // EXCLUIR USUARIO
-app.delete("/api/admin/users/:id", exigirAdministrador, (req, res) => {
-    const { id } = req.params;
+app.delete("/api/admin/users/:id", exigirAdministrador, async (req, res) => {
+    try {
+        const { id } = req.params;
 
-    if (id === req.currentUser.id || id === "admin") {
-        return res.status(403).json({
-            erro: "Não é permitido excluir esta conta."
+        if (id === req.currentUser.id || id === "admin") {
+            return res.status(403).json({
+                erro: "Não é permitido excluir esta conta."
+            });
+        }
+
+        const usuario = await buscarUsuarioPorId(id);
+
+        if (!usuario) {
+            return res.status(404).json({
+                erro: "Usuário não encontrado."
+            });
+        }
+
+        if (usuario.role === "admin") {
+            return res.status(403).json({
+                erro: "Não é permitido excluir administradores."
+            });
+        }
+
+        await pool.query(
+            "DELETE FROM users WHERE id = $1",
+            [id]
+        );
+
+        res.json({
+            sucesso: true,
+            mensagem: "Usuário excluído."
+        });
+
+    } catch (error) {
+        console.error("Erro ao excluir usuário:", error.message);
+
+        res.status(500).json({
+            erro: "Não foi possível excluir o usuário."
         });
     }
-
-    const usuarios = lerUsuarios();
-    const usuario = usuarios.find(user => user.id === id);
-
-    if (!usuario) {
-        return res.status(404).json({ erro: "Usuário não encontrado." });
-    }
-
-    if (usuario.role === "admin") {
-        return res.status(403).json({
-            erro: "Não é permitido excluir administradores."
-        });
-    }
-
-    salvarUsuarios(usuarios.filter(user => user.id !== id));
-
-    res.json({ sucesso: true, mensagem: "Usuário excluído." });
 });
 
 // ======================================================
@@ -1117,7 +1356,11 @@ app.get("/api/live", async (req, res) => {
             } : {})
         });
 
-        res.json(sistemaCatalogo.adicionarClassificacao("live", itens));
+        if (!await exigirAcessoConteudo(payload.tipo, payload.id, req.currentUser)) {
+            return responderAcessoNegado(res);
+        }
+
+        res.json(await sistemaCatalogo.adicionarClassificacao("live", itens));
     } catch (error) {
         console.error("Erro ao carregar canais:", error.message);
         res.status(502).json({ erro: "Erro ao carregar canais." });
@@ -1162,7 +1405,7 @@ app.get("/api/movies", async (req, res) => {
 
         console.time("[LJ] Classificação - filmes");
 
-        const resultado = sistemaCatalogo.adicionarClassificacao(
+        const resultado = await sistemaCatalogo.adicionarClassificacao(
             "movies",
             itens
         );
@@ -1206,7 +1449,7 @@ app.get("/api/movies/:id", async (req, res) => {
         }
 
         // Verifica se o usuário pode acessar o conteúdo.
-        if (!exigirAcessoConteudo("movies", id, req.currentUser)) {
+        if (!await exigirAcessoConteudo("movies", id, req.currentUser)) {
             return responderAcessoNegado(res);
         }
 
@@ -1264,7 +1507,7 @@ app.get("/api/series", async (req, res) => {
             } : {})
         });
 
-        res.json(sistemaCatalogo.adicionarClassificacao("series", itens));
+        res.json(await sistemaCatalogo.adicionarClassificacao("series", itens));
     } catch (error) {
         console.error("Erro ao carregar séries:", error.message);
         res.status(502).json({ erro: "Erro ao carregar séries." });
@@ -1279,7 +1522,7 @@ app.get("/api/series/:id", async (req, res) => {
             return res.status(400).json({ erro: "ID inválido." });
         }
 
-        if (!exigirAcessoConteudo("series", id, req.currentUser)) {
+        if (!await exigirAcessoConteudo("series", id, req.currentUser)) {
             return responderAcessoNegado(res);
         }
 
@@ -1346,7 +1589,7 @@ function criarTokenMidia(targetUrl, contexto) {
     return `${conteudo}.${assinatura}`;
 }
 
-function verificarTokenMidia(token, req) {
+async function verificarTokenMidia(token, req) {
     if (typeof token !== "string" || token.length > 12000) return null;
 
     const partes = token.split(".");
@@ -1415,7 +1658,7 @@ function verificarTokenMidia(token, req) {
 
     if (!["http:", "https:"].includes(target.protocol)) return null;
 
-    if (!exigirAcessoConteudo(payload.tipo, payload.id, req.currentUser)) {
+    if (!await exigirAcessoConteudo(payload.tipo, payload.id, req.currentUser)) {
         return null;
     }
 
@@ -1441,18 +1684,26 @@ async function encaminharMidia(url, req, res, contexto) {
         validateStatus: () => true
     });
 
-    if (response.status >= 400) {
-        if (
-            response.data &&
-            typeof response.data.destroy === "function"
-        ) {
-            response.data.destroy();
-        }
+  if (response.status >= 400) {
+    console.error("[LJ PLAYER] API externa recusou:", {
+        status: response.status,
+        contentType: response.headers["content-type"],
+        detalhe: typeof response.data === "string"
+            ? response.data.slice(0, 300)
+            : "Resposta não textual"
+    });
 
-        return res.status(response.status).json({
-            erro: "O servidor de mídia recusou a reprodução."
-        });
+    if (
+        response.data &&
+        typeof response.data.destroy === "function"
+    ) {
+        response.data.destroy();
     }
+
+    return res.status(response.status).json({
+        erro: "O servidor de mídia recusou a reprodução."
+    });
+}
 
     res.setHeader("Cache-Control", "no-store");
 
@@ -1564,7 +1815,7 @@ app.get("/api/play/:type/:id/:extension", async (req, res) => {
             });
         }
 
-        if (!exigirAcessoConteudo(catalogType, catalogId, req.currentUser)) {
+        if (!await exigirAcessoConteudo(catalogType, catalogId, req.currentUser)) {
             return responderAcessoNegado(res);
         }
 
@@ -1601,7 +1852,7 @@ app.get("/api/play/:type/:id/:extension", async (req, res) => {
 
 app.get("/api/hls-resource", async (req, res) => {
     try {
-        const contexto = verificarTokenMidia(req.query.u, req);
+        const contexto = await verificarTokenMidia(req.query.u, req);
 
         if (!contexto) {
             return res.status(403).send("Recurso expirado ou não autorizado.");
@@ -1626,9 +1877,10 @@ app.get("/api/hls-resource", async (req, res) => {
 // PAGINAS DO SITE
 // ======================================================
 
-app.get("/login.html", (req, res) => {
+
+app.get("/login.html", async (req, res) => {
     try {
-        const usuario = localizarUsuarioSessao(req);
+        const usuario = await localizarUsuarioSessao(req);
 
         if (usuario) {
             return res.redirect(
@@ -1636,18 +1888,15 @@ app.get("/login.html", (req, res) => {
             );
         }
     } catch (error) {
-        console.error(error.message);
+        console.error(
+            "Erro ao verificar sessão na página de login:",
+            error.message
+        );
     }
 
-    res.sendFile(path.join(PUBLIC_DIR, "login.html"));
-});
-
-app.get("/", exigirLoginPagina, (req, res) => {
-    res.sendFile(path.join(PUBLIC_DIR, "index.html"));
-});
-
-app.get("/index.html", exigirLoginPagina, (req, res) => {
-    res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+    return res.sendFile(
+        path.join(PUBLIC_DIR, "login.html")
+    );
 });
 
 app.get(
@@ -1658,6 +1907,29 @@ app.get(
         res.sendFile(path.join(PUBLIC_DIR, "admin.html"));
     }
 );
+// ======================================================
+// ROTA PRINCIPAL
+// ======================================================
+
+app.get("/", async (req, res) => {
+    try {
+        const usuario = await localizarUsuarioSessao(req);
+
+        if (!usuario) {
+            return res.redirect("/login.html");
+        }
+
+        if (usuario.role === "admin") {
+            return res.redirect("/admin.html");
+        }
+
+        return res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+
+    } catch (error) {
+        console.error("Erro ao abrir página inicial:", error.message);
+        return res.redirect("/login.html");
+    }
+});
 
 app.use(express.static(PUBLIC_DIR, { index: false }));
 
