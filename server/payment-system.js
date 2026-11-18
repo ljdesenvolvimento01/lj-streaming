@@ -1,25 +1,30 @@
 
-// ======================================================
-// LJ STREAMING - SISTEMA DE PAGAMENTOS
-// Mercado Pago Checkout API Orders + PIX
-// LJ PREMIUM - R$ 10,00 / 30 dias
-// ======================================================
+"use strict";
 
 const express = require("express");
 const axios = require("axios");
 const crypto = require("crypto");
-const fs = require("fs");
-const path = require("path");
 
 function criarSistemaPagamentos({
-    lerUsuarios,
-    salvarUsuarios,
+    pool,
     localizarUsuarioSessao,
-    dataDir,
     appBaseUrl
 }) {
-    const router = express.Router();
+    if (!pool || typeof pool.query !== "function") {
+        throw new Error("Pool PostgreSQL não foi configurado no sistema de pagamentos.");
+    }
+
+    if (typeof localizarUsuarioSessao !== "function") {
+        throw new Error("Função localizarUsuarioSessao não foi configurada.");
+    }
+
     const webhookRouter = express.Router();
+    const router = express.Router();
+
+    const PRECO = 10;
+    const PLANO = "LJ PREMIUM";
+    const DURACAO_DIAS = 30;
+    const JANELA_PIX_MS = 30 * 60 * 1000;
 
     const ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
     const WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
@@ -27,89 +32,103 @@ function criarSistemaPagamentos({
         process.env.MERCADOPAGO_AMBIENTE || "teste"
     ).toLowerCase();
 
-    const PRECO = 10;
-    const PLANO = "LJ PREMIUM";
-    const DURACAO_DIAS = 30;
-    const JANELA_PIX_MS = 30 * 60 * 1000;
+    const API_MERCADO_PAGO = "https://api.mercadopago.com";
 
-    const paymentsFile = path.join(dataDir, "payments.json");
+    function mapearPagamento(row) {
+        if (!row) return null;
 
-    // --------------------------------------------------
-    // ARQUIVOS
-    // --------------------------------------------------
+        const dados = row.data || {};
 
-    function lerPagamentos() {
-        try {
-            if (!fs.existsSync(paymentsFile)) {
-                fs.mkdirSync(path.dirname(paymentsFile), {
-                    recursive: true
-                });
-
-                fs.writeFileSync(paymentsFile, "[]", "utf8");
-                return [];
-            }
-
-            const conteudo = fs.readFileSync(paymentsFile, "utf8");
-            const dados = JSON.parse(conteudo || "[]");
-
-            return Array.isArray(dados) ? dados : [];
-        } catch (erro) {
-            console.error("Erro ao ler pagamentos:", erro.message);
-            return [];
-        }
+        return {
+            ...dados,
+            orderId: dados.orderId || row.id,
+            paymentId: dados.paymentId || row.id,
+            userId: row.user_id || dados.userId,
+            status: row.status || dados.status || "pending",
+            amount: Number(row.amount ?? dados.amount ?? 0)
+        };
     }
 
-    function salvarPagamentos(pagamentos) {
-        const temporario = `${paymentsFile}.tmp`;
-
-        fs.mkdirSync(path.dirname(paymentsFile), {
-            recursive: true
-        });
-
-        fs.writeFileSync(
-            temporario,
-            JSON.stringify(pagamentos, null, 2),
-            "utf8"
+    async function localizarPagamento(orderId) {
+        const resultado = await pool.query(
+            `SELECT *
+             FROM payments
+             WHERE id = $1
+                OR data->>'orderId' = $1
+                OR data->>'paymentId' = $1
+             LIMIT 1`,
+            [String(orderId)]
         );
 
-        fs.renameSync(temporario, paymentsFile);
+        return mapearPagamento(resultado.rows[0]);
     }
 
-    function localizarPagamento(orderId) {
-        const pagamentos = lerPagamentos();
+    async function listarPagamentosUsuario(userId) {
+        const resultado = await pool.query(
+            `SELECT *
+             FROM payments
+             WHERE user_id = $1
+             ORDER BY created_at DESC
+             LIMIT 50`,
+            [String(userId)]
+        );
 
-        return pagamentos.find(p =>
-            String(p.orderId || p.paymentId) === String(orderId)
+        return resultado.rows.map(mapearPagamento);
+    }
+
+    async function salvarNovoPagamento(registro) {
+        await pool.query(
+            `INSERT INTO payments (
+                id,
+                user_id,
+                status,
+                amount,
+                data,
+                created_at,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5::jsonb, NOW(), NOW())
+            ON CONFLICT (id)
+            DO UPDATE SET
+                status = EXCLUDED.status,
+                amount = EXCLUDED.amount,
+                data = EXCLUDED.data,
+                updated_at = NOW()`,
+            [
+                String(registro.orderId),
+                String(registro.userId),
+                registro.status,
+                PRECO,
+                JSON.stringify(registro)
+            ]
         );
     }
 
-    function atualizarPagamento(orderId, alteracoes) {
-        const pagamentos = lerPagamentos();
+    async function atualizarPagamento(orderId, alteracoes) {
+        const atual = await localizarPagamento(orderId);
 
-        const indice = pagamentos.findIndex(p =>
-            String(p.orderId || p.paymentId) === String(orderId)
-        );
-
-        if (indice === -1) {
+        if (!atual) {
             return null;
         }
 
-        pagamentos[indice] = {
-            ...pagamentos[indice],
-            ...alteracoes
-        };
+        const novoStatus = alteracoes.status || atual.status;
 
-        salvarPagamentos(pagamentos);
+        await pool.query(
+            `UPDATE payments
+             SET status = $2,
+                 data = COALESCE(data, '{}'::jsonb) || $3::jsonb,
+                 updated_at = NOW()
+             WHERE id = $1
+                OR data->>'orderId' = $1
+                OR data->>'paymentId' = $1`,
+            [
+                String(orderId),
+                novoStatus,
+                JSON.stringify(alteracoes)
+            ]
+        );
 
-        return pagamentos[indice];
-    }
-
-    // --------------------------------------------------
-    // USUÁRIO E ASSINATURA
-    // --------------------------------------------------
-
-    async function usuarioAtual(req) {
-        return await localizarUsuarioSessao(req);
+        return localizarPagamento(orderId);
     }
 
     function obterDataExpiracao(usuario) {
@@ -124,25 +143,30 @@ function criarSistemaPagamentos({
     function assinaturaAtiva(usuario) {
         if (!usuario) return false;
 
-        if (usuario.role === "admin") {
+        if (usuario.role === "admin" || usuario.role === "administrador") {
             return true;
-        }
-
-        if (usuario.subscriptionStatus !== "active") {
-            return false;
         }
 
         const expiracao = obterDataExpiracao(usuario);
 
-        if (!expiracao) return false;
+        return (
+            usuario.subscriptionStatus === "active" &&
+            expiracao &&
+            new Date(expiracao).getTime() > Date.now()
+        );
+    }
 
-        return new Date(expiracao).getTime() > Date.now();
+    async function usuarioAtual(req) {
+        if (req.currentUser) {
+            return req.currentUser;
+        }
+
+        return localizarUsuarioSessao(req);
     }
 
     async function verificarAssinatura(req, res, next) {
         try {
-            const usuario =
-                req.currentUser || await usuarioAtual(req);
+            const usuario = await usuarioAtual(req);
 
             if (!usuario) {
                 return res.status(401).json({
@@ -150,26 +174,16 @@ function criarSistemaPagamentos({
                 });
             }
 
-            req.currentUser = usuario;
-
-            if (usuario.role === "admin") {
+            if (assinaturaAtiva(usuario)) {
+                req.currentUser = usuario;
                 return next();
             }
 
-            if (!assinaturaAtiva(usuario)) {
-                return res.status(403).json({
-                    erro: "Assinatura LJ PREMIUM necessária.",
-                    assinaturaAtiva: false,
-                    codigo: "ASSINATURA_INATIVA"
-                });
-            }
-
-            return next();
+            return res.status(403).json({
+                erro: "Sua assinatura LJ PREMIUM não está ativa."
+            });
         } catch (erro) {
-            console.error(
-                "Erro ao verificar assinatura:",
-                erro.message
-            );
+            console.error("Erro ao verificar assinatura:", erro.message);
 
             return res.status(500).json({
                 erro: "Não foi possível verificar sua assinatura."
@@ -177,23 +191,16 @@ function criarSistemaPagamentos({
         }
     }
 
-    // --------------------------------------------------
-    // MERCADO PAGO - CONSULTAR ORDER
-    // --------------------------------------------------
-
     async function consultarOrder(orderId) {
         if (!ACCESS_TOKEN) {
-            throw new Error(
-                "MERCADOPAGO_ACCESS_TOKEN não configurado no .env."
-            );
+            throw new Error("Token do Mercado Pago não configurado.");
         }
 
         const resposta = await axios.get(
-            `https://api.mercadopago.com/v1/orders/${encodeURIComponent(orderId)}`,
+            `${API_MERCADO_PAGO}/v1/orders/${encodeURIComponent(orderId)}`,
             {
                 headers: {
-                    Authorization: `Bearer ${ACCESS_TOKEN}`,
-                    "Content-Type": "application/json"
+                    Authorization: `Bearer ${ACCESS_TOKEN}`
                 },
                 timeout: 20000
             }
@@ -203,12 +210,15 @@ function criarSistemaPagamentos({
     }
 
     function obterPagamentoPix(order) {
-        const pagamentos =
-            order?.transactions?.payments || [];
+        const pagamentos = order?.transactions?.payments || [];
 
-        return pagamentos.find(p =>
-            p?.payment_method?.id === "pix"
-        ) || pagamentos[0] || null;
+        return (
+            pagamentos.find(
+                item => item.payment_method?.id === "pix"
+            ) ||
+            pagamentos[0] ||
+            null
+        );
     }
 
     function normalizarStatus(status) {
@@ -218,149 +228,184 @@ function criarSistemaPagamentos({
         return status || "pending";
     }
 
-    // --------------------------------------------------
-    // ATIVAR ASSINATURA
-    // --------------------------------------------------
+   
+async function ativarPlano(order) {
+    const orderId = String(order?.id || "");
 
-    async function ativarPlano(order) {
-        const orderId = String(order?.id || "");
-        const registro = localizarPagamento(orderId);
+    if (!orderId) return false;
 
-        if (!registro || registro.activated) {
+    const client = await pool.connect();
+
+    try {
+        await client.query("BEGIN");
+
+        const resultadoPagamento = await client.query(
+            `SELECT *
+             FROM payments
+             WHERE id = $1
+             FOR UPDATE`,
+            [orderId]
+        );
+
+        const registro = mapearPagamento(
+            resultadoPagamento.rows[0]
+        );
+
+        if (
+            !registro ||
+            registro.createdByCurrentSystem !== true ||
+            registro.activated === true
+        ) {
+            await client.query("ROLLBACK");
             return false;
         }
 
         const pagamento = obterPagamentoPix(order);
 
-        // Só ativa quando o Mercado Pago confirmar o crédito.
-        if (order.status !== "processed") {
-            return false;
-        }
-
-        if (!pagamento || pagamento.status !== "processed") {
-            return false;
-        }
-
-        // Conferências de segurança.
-        if (String(order.id) !== String(registro.orderId)) {
-            return false;
-        }
-
         if (
-            String(order.external_reference) !==
-            String(registro.userId)
+            order.status !== "processed" ||
+            pagamento?.status !== "processed" ||
+            String(order.id) !== String(registro.orderId) ||
+            String(order.external_reference) !== String(registro.userId) ||
+            Number(order.total_amount) !== PRECO ||
+            Number(pagamento.amount) !== PRECO ||
+            pagamento.payment_method?.id !== "pix"
         ) {
-            console.error("Referência externa não corresponde ao usuário.");
+            await client.query("ROLLBACK");
             return false;
         }
 
-        if (Number(order.total_amount) !== PRECO) {
-            console.error("Valor da order diferente do esperado.");
-            return false;
-        }
-
-        if (Number(pagamento.amount) !== PRECO) {
-            console.error("Valor do pagamento diferente do esperado.");
-            return false;
-        }
-
-        if (pagamento.payment_method?.id !== "pix") {
-            console.error("O pagamento recebido não é PIX.");
-            return false;
-        }
-
-        const usuarios = await lerUsuarios();
-
-        const usuario = usuarios.find(u =>
-            String(u.id) === String(registro.userId)
+        const resultadoUsuario = await client.query(
+            `SELECT *
+             FROM users
+             WHERE id = $1
+             FOR UPDATE`,
+            [String(registro.userId)]
         );
 
+        const usuario = resultadoUsuario.rows[0];
+
         if (!usuario) {
-            console.error("Usuário do pagamento não encontrado.");
+            await client.query("ROLLBACK");
             return false;
         }
 
         const agora = new Date();
-        const expiracaoAtual = obterDataExpiracao(usuario);
 
-        let inicio = agora;
+        const expiracaoAtual = usuario.subscription_expires_at
+            ? new Date(usuario.subscription_expires_at)
+            : null;
 
-        if (
-            usuario.subscriptionStatus === "active" &&
+        const assinaturaAindaAtiva =
+            usuario.subscription_status === "active" &&
             expiracaoAtual &&
-            new Date(expiracaoAtual).getTime() > agora.getTime()
-        ) {
-            inicio = new Date(expiracaoAtual);
-        }
+            expiracaoAtual.getTime() > agora.getTime();
 
-        const novaExpiracao = new Date(inicio);
-        novaExpiracao.setDate(
-            novaExpiracao.getDate() + DURACAO_DIAS
+        const inicio = assinaturaAindaAtiva
+            ? expiracaoAtual
+            : agora;
+
+        const novaExpiracao = new Date(
+            inicio.getTime() +
+            DURACAO_DIAS * 24 * 60 * 60 * 1000
         );
 
-        usuario.subscriptionStatus = "active";
-        usuario.subscriptionPlan = PLANO;
-        usuario.subscriptionExpiresAt =
-            novaExpiracao.toISOString();
+        const agoraISO = agora.toISOString();
+        const expiracaoISO = novaExpiracao.toISOString();
 
-        await salvarUsuarios(usuarios);
+        await client.query(
+            `UPDATE users
+             SET plan = $2::text,
+                 subscription_status = 'active',
+                 subscription_expires_at = $3::timestamptz,
+                 data = COALESCE(data, '{}'::jsonb)
+                     || jsonb_build_object('subscriptionPlan', $2::text),
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [
+                String(registro.userId),
+                PLANO,
+                expiracaoISO
+            ]
+        );
 
-        atualizarPagamento(orderId, {
+        const atualizacao = {
             status: "approved",
             activated: true,
-            approvedAt: new Date().toISOString(),
-            expiresAt: novaExpiracao.toISOString(),
+            approvedAt: agoraISO,
+            expiresAt: expiracaoISO,
             transactionId: pagamento.id || null
-        });
+        };
+
+        await client.query(
+            `UPDATE payments
+             SET status = 'approved',
+                 data = COALESCE(data, '{}'::jsonb) || $2::jsonb,
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [
+                orderId,
+                JSON.stringify(atualizacao)
+            ]
+        );
+
+        await client.query("COMMIT");
 
         console.log(
-            `Assinatura LJ PREMIUM ativada para ${usuario.username || usuario.email}.`
+            "Assinatura LJ PREMIUM ativada:",
+            registro.userId
         );
 
         return true;
-    }
 
-    // --------------------------------------------------
-    // PROCESSAR / ATUALIZAR ORDER
-    // --------------------------------------------------
+    } catch (erro) {
+        await client.query("ROLLBACK");
+        throw erro;
+
+    } finally {
+        client.release();
+    }
+}
+
 
     async function processarPagamento(orderId) {
-        const registro = localizarPagamento(orderId);
+        const registro = await localizarPagamento(orderId);
 
         if (!registro) {
-            throw new Error("Pedido não encontrado.");
+            return null;
         }
 
         const order = await consultarOrder(orderId);
 
+        let ativado = false;
+
         if (order.status === "processed") {
-            await ativarPlano(order);
+            ativado = await ativarPlano(order);
         }
 
-        const status = normalizarStatus(order.status);
+        const pagamento = obterPagamentoPix(order);
 
-        atualizarPagamento(orderId, {
-            status,
-            mercadoPagoStatus: order.status,
+        await atualizarPagamento(orderId, {
+            status: ativado
+                ? "approved"
+                : normalizarStatus(order.status),
+            mercadoPagoStatus: order.status || null,
             statusDetail: order.status_detail || null,
-            lastCheckedAt: new Date().toISOString()
+            lastCheckedAt: new Date().toISOString(),
+            ...(pagamento?.id
+                ? { transactionId: pagamento.id }
+                : {})
         });
 
         return {
             order,
-            registro: localizarPagamento(orderId)
+            registro: await localizarPagamento(orderId),
+            ativado
         };
     }
 
-    // --------------------------------------------------
-    // VALIDAR ASSINATURA DO WEBHOOK
-    // --------------------------------------------------
-
     function validarAssinaturaWebhook(req) {
         if (!WEBHOOK_SECRET) {
-            console.error(
-                "MERCADOPAGO_WEBHOOK_SECRET não configurado."
-            );
             return false;
         }
 
@@ -369,8 +414,7 @@ function criarSistemaPagamentos({
 
         const dataId =
             req.query["data.id"] ||
-            req.body?.data?.id ||
-            req.body?.id;
+            req.body?.data?.id;
 
         if (!assinatura || !requestId || !dataId) {
             return false;
@@ -390,36 +434,31 @@ function criarSistemaPagamentos({
             return false;
         }
 
-        const manifest =
+        const manifesto =
             `id:${String(dataId).toLowerCase()};` +
             `request-id:${requestId};` +
             `ts:${partes.ts};`;
 
-        const hash = crypto
+        const esperado = crypto
             .createHmac("sha256", WEBHOOK_SECRET)
-            .update(manifest)
+            .update(manifesto)
             .digest("hex");
 
         try {
-            const recebido = Buffer.from(partes.v1, "hex");
-            const esperado = Buffer.from(hash, "hex");
+            const recebidoBuffer = Buffer.from(partes.v1, "hex");
+            const esperadoBuffer = Buffer.from(esperado, "hex");
 
-            if (recebido.length !== esperado.length) {
-                return false;
-            }
-
-            return crypto.timingSafeEqual(
-                recebido,
-                esperado
+            return (
+                recebidoBuffer.length === esperadoBuffer.length &&
+                crypto.timingSafeEqual(
+                    recebidoBuffer,
+                    esperadoBuffer
+                )
             );
         } catch {
             return false;
         }
     }
-
-    // --------------------------------------------------
-    // WEBHOOK - TOPIC ORDERS
-    // --------------------------------------------------
 
     webhookRouter.post("/webhook", async (req, res) => {
         try {
@@ -431,12 +470,11 @@ function criarSistemaPagamentos({
 
             const orderId =
                 req.query["data.id"] ||
-                req.body?.data?.id ||
-                req.body?.id;
+                req.body?.data?.id;
 
             if (!orderId) {
                 return res.status(400).json({
-                    erro: "Identificação do pedido não recebida."
+                    erro: "Identificador do pagamento ausente."
                 });
             }
 
@@ -448,25 +486,21 @@ function criarSistemaPagamentos({
         } catch (erro) {
             console.error(
                 "Erro no webhook do Mercado Pago:",
-                erro.response?.data || erro.message
+                erro.message
             );
 
             return res.status(200).json({
                 recebido: true,
-                processamento: "pendente"
+                status: "pending"
             });
         }
     });
-
-    // --------------------------------------------------
-    // CRIAR PIX
-    // --------------------------------------------------
 
     router.post("/payments/pix", async (req, res) => {
         try {
             if (!ACCESS_TOKEN) {
                 return res.status(500).json({
-                    erro: "Access Token do Mercado Pago não configurado."
+                    erro: "Mercado Pago não configurado."
                 });
             }
 
@@ -474,13 +508,16 @@ function criarSistemaPagamentos({
 
             if (!usuario) {
                 return res.status(401).json({
-                    erro: "Faça login para assinar."
+                    erro: "Faça login para gerar o PIX."
                 });
             }
 
-            if (usuario.role === "admin") {
+            if (
+                usuario.role === "admin" ||
+                usuario.role === "administrador"
+            ) {
                 return res.status(400).json({
-                    erro: "Administradores não precisam assinar."
+                    erro: "Administradores não precisam de assinatura."
                 });
             }
 
@@ -492,61 +529,64 @@ function criarSistemaPagamentos({
 
             if (!usuario.email) {
                 return res.status(400).json({
-                    erro: "Sua conta precisa ter um e-mail cadastrado."
+                    erro: "Cadastre um e-mail antes de gerar o PIX."
                 });
             }
 
-            const pagamentos = lerPagamentos();
+            const pagamentos = await listarPagamentosUsuario(
+                usuario.id
+            );
+
             const agora = Date.now();
 
-            // Reutiliza PIX pendente ainda válido.
-            const pendente = pagamentos.find(p => {
-                const criado = new Date(p.createdAt).getTime();
+            const pendente = pagamentos.find(registro => {
+                const criadoEm = new Date(
+                    registro.createdAt || 0
+                ).getTime();
 
                 return (
-                    String(p.userId) === String(usuario.id) &&
-                    !p.activated &&
-                    ["pending", "created", "action_required", "processing"].includes(
-                        p.status
+                    registro.createdByCurrentSystem === true &&
+                    registro.activated !== true &&
+                    ["pending", "action_required", "created"].includes(
+                        registro.status
                     ) &&
-                    p.qrCode &&
-                    agora - criado < JANELA_PIX_MS
+                    registro.qrCode &&
+                    agora - criadoEm < JANELA_PIX_MS
                 );
             });
 
             if (pendente) {
                 return res.json({
-                    paymentId: pendente.orderId || pendente.paymentId,
+                    sucesso: true,
+                    paymentId: pendente.paymentId,
                     qrCode: pendente.qrCode,
-                    qrCodeBase64: pendente.qrCodeBase64 || "",
-                    ticketUrl: pendente.ticketUrl || "",
+                    qrCodeBase64: pendente.qrCodeBase64,
+                    ticketUrl: pendente.ticketUrl,
                     valor: PRECO,
                     plano: PLANO,
                     duracaoDias: DURACAO_DIAS,
-                    status: pendente.status
+                    status: pendente.status,
+                    reutilizado: true
                 });
             }
 
-            const idempotencyKey = crypto.randomUUID();
+            const emailPagador = AMBIENTE === "teste"
+                ? "test_payer@example.com"
+                : usuario.email;
 
-            // No teste, use o pagador de teste indicado
-            // pela documentação oficial do Mercado Pago.
-            // Em produção, use o e-mail real do usuário.
-            const payer = AMBIENTE === "teste"
-                ? {
-                    email: "test_payer@example.com",
-                    first_name: "APRO"
-                }
-                : {
-                    email: usuario.email
-                };
+            const nomePagador = AMBIENTE === "teste"
+                ? "APRO"
+                : (usuario.username || "Cliente");
 
             const payload = {
                 type: "online",
                 processing_mode: "automatic",
                 external_reference: String(usuario.id),
                 total_amount: PRECO.toFixed(2),
-                payer,
+                payer: {
+                    email: emailPagador,
+                    first_name: nomePagador
+                },
                 transactions: {
                     payments: [
                         {
@@ -561,13 +601,13 @@ function criarSistemaPagamentos({
             };
 
             const resposta = await axios.post(
-                "https://api.mercadopago.com/v1/orders",
+                `${API_MERCADO_PAGO}/v1/orders`,
                 payload,
                 {
                     headers: {
                         Authorization: `Bearer ${ACCESS_TOKEN}`,
                         "Content-Type": "application/json",
-                        "X-Idempotency-Key": idempotencyKey
+                        "X-Idempotency-Key": crypto.randomUUID()
                     },
                     timeout: 30000
                 }
@@ -575,24 +615,33 @@ function criarSistemaPagamentos({
 
             const order = resposta.data;
             const pagamento = obterPagamentoPix(order);
-            const metodo = pagamento?.payment_method || {};
+
+            const qrCode =
+                pagamento?.payment_method?.qr_code ||
+                pagamento?.point_of_interaction?.transaction_data?.qr_code ||
+                null;
+
+            const qrCodeBase64 =
+                pagamento?.payment_method?.qr_code_base64 ||
+                pagamento?.point_of_interaction?.transaction_data?.qr_code_base64 ||
+                null;
+
+            const ticketUrl =
+                pagamento?.payment_method?.ticket_url ||
+                pagamento?.point_of_interaction?.transaction_data?.ticket_url ||
+                null;
 
             if (!order.id) {
-                throw new Error(
-                    "O Mercado Pago não retornou o ID do pedido."
-                );
+                throw new Error("Mercado Pago não retornou o ID do pedido.");
             }
 
-            const qrCode = metodo.qr_code || "";
-            const qrCodeBase64 = metodo.qr_code_base64 || "";
-            const ticketUrl = metodo.ticket_url || "";
+            if (!qrCode && !qrCodeBase64) {
+                throw new Error("Mercado Pago não retornou o QR Code PIX.");
+            }
 
             const registro = {
                 orderId: String(order.id),
-
-                // Mantém compatibilidade com o frontend antigo.
                 paymentId: String(order.id),
-
                 transactionId: pagamento?.id || null,
                 userId: String(usuario.id),
                 amount: PRECO,
@@ -603,52 +652,39 @@ function criarSistemaPagamentos({
                 qrCodeBase64,
                 ticketUrl,
                 createdAt: new Date().toISOString(),
-                activated: false
+                activated: false,
+                createdByCurrentSystem: true,
+                environment: AMBIENTE
             };
 
-            const listaAtualizada = lerPagamentos();
-            listaAtualizada.push(registro);
-            salvarPagamentos(listaAtualizada);
+            await salvarNovoPagamento(registro);
 
-            // Se já tiver sido processado na criação,
-            // tenta ativar imediatamente.
             if (order.status === "processed") {
                 await ativarPlano(order);
             }
 
             return res.json({
-                paymentId: String(order.id),
+                sucesso: true,
+                paymentId: registro.paymentId,
                 qrCode,
                 qrCodeBase64,
                 ticketUrl,
                 valor: PRECO,
                 plano: PLANO,
                 duracaoDias: DURACAO_DIAS,
-                status: normalizarStatus(order.status)
+                status: registro.status
             });
-
         } catch (erro) {
             console.error(
-                "Erro ao criar PIX:",
+                "Erro ao gerar PIX:",
                 erro.response?.data || erro.message
             );
 
-            const detalhes = erro.response?.data;
-
-            return res.status(
-                erro.response?.status || 500
-            ).json({
-                erro: "Não foi possível criar o PIX.",
-                detalhes: detalhes?.message ||
-                    detalhes?.error ||
-                    erro.message
+            return res.status(500).json({
+                erro: "Não foi possível gerar o PIX. Tente novamente."
             });
         }
     });
-
-    // --------------------------------------------------
-    // CONSULTAR STATUS DO PIX
-    // --------------------------------------------------
 
     router.get("/payments/:id/status", async (req, res) => {
         try {
@@ -656,12 +692,11 @@ function criarSistemaPagamentos({
 
             if (!usuario) {
                 return res.status(401).json({
-                    erro: "Faça login novamente."
+                    erro: "Faça login para consultar o pagamento."
                 });
             }
 
-            const orderId = String(req.params.id);
-            const registro = localizarPagamento(orderId);
+            const registro = await localizarPagamento(req.params.id);
 
             if (!registro) {
                 return res.status(404).json({
@@ -669,48 +704,48 @@ function criarSistemaPagamentos({
                 });
             }
 
+            const administrador =
+                usuario.role === "admin" ||
+                usuario.role === "administrador";
+
             if (
                 String(registro.userId) !== String(usuario.id) &&
-                usuario.role !== "admin"
+                !administrador
             ) {
                 return res.status(403).json({
                     erro: "Você não tem acesso a este pagamento."
                 });
             }
 
-            const resultado = await processarPagamento(orderId);
-
-            const assinatura =
-                assinaturaAtiva(usuario) ||
-                registro.activated ||
-                assinaturaAtiva(
-                    (await lerUsuarios()).find(u =>
-                        String(u.id) === String(usuario.id)
-                    )
-                );
-
-            return res.json({
-                paymentId: orderId,
-                status: resultado.registro?.status || "pending",
-                mercadoPagoStatus: resultado.order.status,
-                assinaturaAtiva: Boolean(assinatura)
-            });
-
-        } catch (erro) {
-            console.error(
-                "Erro ao consultar pagamento:",
-                erro.response?.data || erro.message
+            const resultado = await processarPagamento(
+                registro.orderId
             );
 
+            const usuarioAtualizado = await localizarUsuarioSessao(req);
+
+            const assinatura =
+                assinaturaAtiva(usuarioAtualizado);
+
+            const registroAtualizado =
+                await localizarPagamento(registro.orderId);
+
+            return res.json({
+                paymentId: registroAtualizado.paymentId,
+                status: registroAtualizado.status,
+                mercadoPagoStatus:
+                    resultado?.order?.status || null,
+                assinaturaAtiva: assinatura
+            });
+        } catch (erro) {
+            console.error(
+    "Erro ao consultar pagamento:",
+    erro.stack || erro.message
+);
             return res.status(500).json({
                 erro: "Não foi possível consultar o pagamento."
             });
         }
     });
-
-    // --------------------------------------------------
-    // STATUS DA ASSINATURA DO USUÁRIO
-    // --------------------------------------------------
 
     router.get("/subscription/status", async (req, res) => {
         try {
@@ -718,23 +753,24 @@ function criarSistemaPagamentos({
 
             if (!usuario) {
                 return res.status(401).json({
-                    erro: "Faça login para continuar."
+                    erro: "Faça login para consultar sua assinatura."
                 });
             }
 
             return res.json({
                 active: assinaturaAtiva(usuario),
-                plano: usuario.subscriptionPlan || PLANO,
-                status: usuario.role === "admin"
-                    ? "active"
-                    : usuario.subscriptionStatus || "inactive",
+                plan: usuario.subscriptionPlan || usuario.plan || PLANO,
+                status:
+                    usuario.role === "admin" ||
+                    usuario.role === "administrador"
+                        ? "active"
+                        : usuario.subscriptionStatus || "inactive",
                 expiresAt: obterDataExpiracao(usuario)
             });
-
         } catch (erro) {
             console.error(
                 "Erro ao consultar assinatura:",
-                erro.message
+                erro.stack ||  erro.message
             );
 
             return res.status(500).json({
