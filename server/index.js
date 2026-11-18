@@ -1919,10 +1919,6 @@ app.get("/", async (req, res) => {
             return res.redirect("/login.html");
         }
 
-        if (usuario.role === "admin") {
-            return res.redirect("/admin.html");
-        }
-
         return res.sendFile(path.join(PUBLIC_DIR, "index.html"));
 
     } catch (error) {
