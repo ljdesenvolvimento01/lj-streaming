@@ -1804,6 +1804,63 @@ async function encaminharMidia(url, req, res, contexto) {
     response.data.pipe(res);
 }
 
+async function redirecionarMidiaDireta(url, res) {
+    const response = await axios.get(url, {
+        responseType: "stream",
+        timeout: 20000,
+        maxRedirects: 0,
+        validateStatus: () => true
+    });
+
+    const location = response.headers.location;
+
+    // A API deve devolver um redirecionamento para a CDN.
+    if (
+        response.status >= 300 &&
+        response.status < 400 &&
+        location
+    ) {
+        if (response.data && typeof response.data.destroy === "function") {
+            response.data.destroy();
+        }
+
+        const destino = new URL(location, url);
+
+        // Aceitar somente destinos HTTPS.
+        if (
+            destino.protocol !== "https:" ||
+            destino.username ||
+            destino.password
+        ) {
+            console.error("[LJ PLAYER] Redirecionamento de mídia inválido.");
+
+            return res.status(502).json({
+                erro: "O servidor retornou um endereço de mídia inválido."
+            });
+        }
+
+        console.log("[LJ PLAYER] Redirecionamento para CDN recebido.");
+
+        res.setHeader("Cache-Control", "no-store");
+
+        return res.redirect(302, destino.href);
+    }
+
+    if (response.data && typeof response.data.destroy === "function") {
+        response.data.destroy();
+    }
+
+    console.error("[LJ PLAYER] Não foi recebido redirecionamento da API:", {
+        status: response.status,
+        contentType: response.headers["content-type"]
+    });
+
+    return res.status(response.status >= 400 ? response.status : 502).json({
+        erro: "Não foi possível obter o endereço de reprodução."
+    });
+}
+
+
 // ======================================================
 // REPRODUCAO DE CONTEUDO
 // ======================================================
@@ -1844,7 +1901,9 @@ app.get("/api/play/:type/:id/:extension", async (req, res) => {
             return responderAcessoNegado(res);
         }
 
-        const origin = await obterStreamOrigin();
+     
+            const origin = process.env.STREAM_BASE_URL ||
+            "https://api.redemuvi.lat";
 
         const username = encodeURIComponent(API_USERNAME);
         const password = encodeURIComponent(API_PASSWORD);
@@ -1852,14 +1911,8 @@ app.get("/api/play/:type/:id/:extension", async (req, res) => {
         const caminho = `/${type}/${username}/${password}/${id}.${extension}`;
         const url = new URL(caminho, origin).href;
 
-        const contexto = {
-            userId: req.currentUser.id,
-            sessionId: req.sessionID,
-            tipo: catalogType,
-            id: catalogId
-        };
+        await redirecionarMidiaDireta(url, res);
 
-        await encaminharMidia(url, req, res, contexto);
     } catch (error) {
         console.error("Erro no player:", error.message);
 
@@ -1870,7 +1923,6 @@ app.get("/api/play/:type/:id/:extension", async (req, res) => {
         }
     }
 });
-
 // ======================================================
 // RECURSOS INTERNOS HLS
 // ======================================================
