@@ -1564,6 +1564,12 @@ async function obterStreamOrigin() {
 
     const dados = await consultarAPI();
     const info = dados.server_info || {};
+    console.log("[LJ PLAYER] Informações do servidor de mídia:", {
+    url: info.url,
+    protocolo: info.server_protocol,
+    porta: info.port,
+    portaHttps: info.https_port
+});
     const apiOrigin = new URL(API_URL).origin;
 
     const protocolValue = String(
