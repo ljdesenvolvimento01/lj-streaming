@@ -15,6 +15,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const session = require("express-session");
+const PgSession = require("connect-pg-simple")(session);
 const nodemailer = require("nodemailer");
 
 const rateLimitModule = require("express-rate-limit");
@@ -76,7 +77,14 @@ fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 app.use(express.json({ limit: "20kb" }));
 app.use(express.urlencoded({ extended: false, limit: "20kb" }));
 
+const sessionStore = new PgSession({
+    pool,
+    tableName: "user_sessions",
+    createTableIfMissing: true
+});
+
 app.use(session({
+    store: sessionStore,
     name: "lj_streaming_session",
     secret: SESSION_SECRET,
     resave: false,
@@ -89,10 +97,6 @@ app.use(session({
         maxAge: 8 * 60 * 60 * 1000
     }
 }));
-
-if (IS_PRODUCTION) {
-    console.warn("AVISO: configure armazenamento persistente de sessões antes de publicar.");
-}
 
 // ======================================================
 // BANCO DE USUARIOS
