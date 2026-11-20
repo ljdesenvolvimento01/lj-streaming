@@ -1332,10 +1332,30 @@ async function consultarFilmesComCache(categoryId) {
     return requisicao;
 }
 
-// ======================================================
+
+ // ======================================================
 // TV AO VIVO
 // ======================================================
 
+app.get("/api/live/categories", async (req, res) => {
+    try {
+        const categorias = await consultarAPI({
+            action: "get_live_categories"
+        });
+
+        res.json(categorias);
+
+    } catch (error) {
+        console.error(
+            "Erro nas categorias de TV:",
+            error.message
+        );
+
+        res.status(502).json({
+            erro: "Erro ao carregar categorias de TV."
+        });
+    }
+});
 
 app.get("/api/live", async (req, res) => {
     try {
@@ -1347,11 +1367,17 @@ app.get("/api/live", async (req, res) => {
         });
 
         res.json(
-            await sistemaCatalogo.adicionarClassificacao("live", itens)
+            await sistemaCatalogo.adicionarClassificacao(
+                "live",
+                itens
+            )
         );
 
     } catch (error) {
-        console.error("Erro ao carregar canais:", error.message);
+        console.error(
+            "Erro ao carregar canais:",
+            error.message
+        );
 
         res.status(502).json({
             erro: "Erro ao carregar canais."
@@ -1359,26 +1385,6 @@ app.get("/api/live", async (req, res) => {
     }
 });
 
-
-app.get("/api/live", async (req, res) => {
-    try {
-        const itens = await consultarAPI({
-            action: "get_live_streams",
-            ...(req.query.category_id ? {
-                category_id: req.query.category_id
-            } : {})
-        });
-
-        if (!await exigirAcessoConteudo(payload.tipo, payload.id, req.currentUser)) {
-            return responderAcessoNegado(res);
-        }
-
-        res.json(await sistemaCatalogo.adicionarClassificacao("live", itens));
-    } catch (error) {
-        console.error("Erro ao carregar canais:", error.message);
-        res.status(502).json({ erro: "Erro ao carregar canais." });
-    }
-});
 
 // ======================================================
 // CATEGORIAS DE FILMES
