@@ -33,20 +33,33 @@
     </aside>
 
     <main class="main-content">
+<header class="topbar">
 
-        <header class="topbar">
-            <div class="mobile-brand">LJ<span>+</span></div>
+    <button
+        id="mobile-menu-toggle"
+        class="mobile-menu-toggle"
+        aria-label="Abrir menu"
+        aria-expanded="false"
+        type="button"
+    >☰</button>
 
-            <div class="search-box">
-                <span>⌕</span>
-                <input id="pesquisa" type="search"
-                       placeholder="Buscar filmes, séries e canais...">
-            </div>
+    <div class="mobile-brand">LJ<span>+</span></div>
 
-            <div class="user-profile">
-                <span>●</span> Minha conta
-            </div>
-        </header>
+    <div class="search-box">
+        <span>⌕</span>
+        <input
+            id="pesquisa"
+            type="search"
+            placeholder="Buscar filmes, séries e canais..."
+        >
+    </div>
+
+    <div class="user-profile">
+        <span>●</span> Minha conta
+    </div>
+
+</header>
+
 
         <section id="hero" class="hero">
             <div class="hero-content">
@@ -85,8 +98,10 @@
             <span>Seu entretenimento em um só lugar.</span>
         </footer>
 
-    </main>
-</div>
+    <main>
+    </div>
+
+<div id="mobile-menu-overlay" class="mobile-menu-overlay"></div>
 
 <div id="modal" class="modal">
     <div class="modal-content">

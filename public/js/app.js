@@ -2688,3 +2688,50 @@ function adicionarEstilosBiblioteca() {
 
 adicionarEstilosBiblioteca();
 inicializarConta();
+
+
+/* =====================================
+   MENU MOBILE - LJ STREAMING
+===================================== */
+
+(() => {
+    const botao = document.getElementById("mobile-menu-toggle");
+    const menu = document.querySelector(".sidebar");
+    const overlay = document.getElementById("mobile-menu-overlay");
+
+    if (!botao || !menu || !overlay) return;
+
+    function abrirMenu() {
+        menu.classList.add("mobile-open");
+        overlay.classList.add("active");
+        botao.setAttribute("aria-expanded", "true");
+        botao.setAttribute("aria-label", "Fechar menu");
+        document.body.style.overflow = "hidden";
+    }
+
+    function fecharMenu() {
+        menu.classList.remove("mobile-open");
+        overlay.classList.remove("active");
+        botao.setAttribute("aria-expanded", "false");
+        botao.setAttribute("aria-label", "Abrir menu");
+        document.body.style.overflow = "";
+    }
+
+    botao.addEventListener("click", () => {
+        if (menu.classList.contains("mobile-open")) {
+            fecharMenu();
+        } else {
+            abrirMenu();
+        }
+    });
+
+    overlay.addEventListener("click", fecharMenu);
+
+    menu.querySelectorAll(".nav-item").forEach(item => {
+        item.addEventListener("click", fecharMenu);
+    });
+
+    document.addEventListener("keydown", event => {
+        if (event.key === "Escape") fecharMenu();
+    });
+})();
