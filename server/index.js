@@ -1336,16 +1336,29 @@ async function consultarFilmesComCache(categoryId) {
 // TV AO VIVO
 // ======================================================
 
-app.get("/api/live/categories", async (req, res) => {
+
+app.get("/api/live", async (req, res) => {
     try {
-        res.json(await consultarAPI({
-            action: "get_live_categories"
-        }));
+        const itens = await consultarAPI({
+            action: "get_live_streams",
+            ...(req.query.category_id ? {
+                category_id: req.query.category_id
+            } : {})
+        });
+
+        res.json(
+            await sistemaCatalogo.adicionarClassificacao("live", itens)
+        );
+
     } catch (error) {
-        console.error("Erro nas categorias de TV:", error.message);
-        res.status(502).json({ erro: "Erro ao carregar categorias de TV." });
+        console.error("Erro ao carregar canais:", error.message);
+
+        res.status(502).json({
+            erro: "Erro ao carregar canais."
+        });
     }
 });
+
 
 app.get("/api/live", async (req, res) => {
     try {
